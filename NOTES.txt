@@ -1,0 +1,191 @@
+spon 2018-09-28
+
+LEDS
+4 = blue
+3 = orange
+2 = green
+
+
+installing loop.py (as main.py), with a default boot.py, blinks the LED
+and output appears on the VCP == virtual comm port
+
+next experiment - change code (on the device!) to toggle led 3, and print, in VCP+HID (keyboard) mode:
+* orange LED toggles
+* print output appears on VCP
+
+ok, so how do we do the next code iteration?
+
+do the USR/RST dance to reboot into orange (SAFE) mode:
+
+* boot.py is VCP+HID,
+* main.py is the same
+... but both are ignored
+change code to toggle led 2
+unmount
+reset button
+
+* led 2 toggles
+* new output appears
+
+next experiment
+* keyboard looping code, toggling led 4, no keyboard - installed
+
+
+Traceback (most recent call last):
+  File "main.py", line 3, in <module>
+  File "kbmap.py", line 14, in <module>
+KeyError: 1
+
+* fix errors in kbmap
+* runs, output, LED blink - yay!
+
+turn keyboard output back on - works!
+
+yBoard spon$ th USB keyboard X = 0Fish with USB keyboard X = 2Fish with USB keyboard X = 3Fish with USB keyboard X = 4Fish with USB keyboard X = 5Fish with USB keyboard X = 6Fish with USB keyboard X = 7Fish with USB keyboard X = 8Fish with USB keyboard X = 9Fish with USB keyboard X = 0Fish with USB keyboard X = 20Fish with USB keyboard X = 22Fish with USB keyboard X = 23Fish with USB keyboard X = 24
+
+Airgead:PyBoard spon$ ment USB keyboard X = 0 0x0
+-bash: ment: command not found
+Airgead:PyBoard spon$ # experiment USB keyboard X = 1 0x1
+Airgead:PyBoard spon$ # experiment USB keyboard X = 2 0x2
+Airgead:PyBoard spon$ # experiment USB keyboard X = 3 0x3
+Airgead:PyBoard spon$ # experiment USB keyboard X = 4 0x4
+Airgead:PyBoard spon$ # experiment USB keyboard X = 5 0x5
+Airgead:PyBoard spon$ # experiment USB keyboard X = 6 0x6
+Airgead:PyBoard spon$ # experiment USB keyboard X = 7 0x7
+Airgead:PyBoard spon$ # experiment USB keyboard X = 8 0x8
+Airgead:PyBoard spon$ # experiment USB keyboard X = 9 0x9
+Airgead:PyBoard spon$ # experiment USB keyboard X = 10 0xa
+
+ok, so what's next?
+
+http://wiki.micropython.org/USB-HID-Keyboard-mode-example-a-password-dongle
+
+has some interesting code - pin pullup configuration and debounce code, giving each pin an is_pressed method.
+
+It looks like we can just connect switches to random pyboard pins - Y12, X9 etc.
+
+so, what's my code loop?
+
+A "button press" equivalent is started by a switch triggering, and completes when there have been no changes for, say, 100ms.
+
+So we'd ecpect to see
+key A go low (bouncing like crazy)
+key B go low (ditto)
+
+probably, the timeout runs from each new key going low, rather than the first key going low.
+
+we probably don't really need to debounce - if we can get a callback on a key going low, then that sets a bit in the keyboard mask - and if it's a new bit, restarts the timer.
+
+when the timer expires, we read the mask and look up the key.
+
+for now: just send the key-up events straight away.
+
+question - is this valid:
+press A & B
+wait 1s
+press C
+release A, B & C
+
+is that two keys - AB and then ABC - or just AB?
+
+so, how do we reset? Just wait until keys are STABLE up.
+
+states:
+ IDLE
+ KEY DOWN
+ KEYPRESS
+ KEY UP
+
+
+ IDLE:
+  if key down - go to state KEY_DOWN, start timer
+ KEY_DOWN:
+  if new key down - restart timer
+  if timer expires - go to KEYPRESS
+
+KEYPRESS:
+ read the mask, send kbd key down and key up, go to KEY_UP
+
+ KEY_UP:
+  wait until all keys have been up for 1 debounce period - go to IDLE
+
+
+
+  where does debounce happen?
+
+  can I emulate this by building a mock get_keymask that just feeds in events?
+
+I think the nice thing here is that get_keymask() is just a loop over the 8 keys.
+
+hardware - prottyping board + drill for keys + hot glue gun?
+
+no need to change USB connector, so USB cable can be glued down.
+
+vero board? probably just any nonconducting surface that can be drilled would work
+
+can I find my mbed version of my code - yes, I can!
+
+
+chordmap: map chord value (uint8) to a SEQUENCE of keys.
+
+0x21 --> "a"
+
+0xff --> "the quick brown fox jumped over the lazy dog/left arrow/^C/ctrl-shift-backspace"
+
+there's also a chord MODE layer -  lower case, upper case, numbers, symbols, macros - and modal shft and control keys?
+
+so send X as SHIFT, X
+send CAT as CAPS, c, a, t, CAPS (or have an UNCAPS chord?)
+
+send 0xba115 as NUM, 0, x, b, a, 1, 1, 5, NUM. <-- NB: include x in number mode
+
+ctrl-command-right - either CTL, CMD, RIGHT or MACRO, MACRO-1 or whatever.
+
+possible modes:
+normal - lowercase chanarcters
+SHIFT - a single uppercase character
+CAPS - upper case characters
+SYM - a single symbol
+SYMS - series of symbols
+NUM - single number
+NUMS - series of numbers?
+
+maybe I'm thinking too much at an implementation level
+
+on the keyboard, we have
+
+letters
+numbers
+symbols/punctuation
+mode keys - shift, control, caps, command, function
+movement keys - arrows, page up
+function keys
+media keys - expose all, play, mute etc.
+specials - space, tab, enter, backspace, delete, escape for the vim perverts
+
+I propose to ignore the duplicate keys - so left shift and right shift are the same.
+
+
+so, in terms of implementation, how does this seem:
+
+shift/caps lock- one or several uppercase letters
+num/num lock - one or serveral hex numbers 0-9a-fx. In this mode shift gives upper 0-9A-FX
+sym/sym lock - one or serveral symbols, punctuation marks. Is sym lock really useful? probably not.
+
+I think there are a bunch of keys that aleays need to be accessible - space, tab, return, backspace, delete, arrow keys maybe.
+
+This whole thing is bloody hairy - maybe the trick is to focus on getting the hardware going - say just lowercase letters - and see how that goes. With that I could do an online typing tutor...
+
+so:
+1. hardware - can I remove the mbed from the cardboard box, and wire in the pyboard? Can I connectorize that process - solder to keys, use the breadboard to connect to the pyboard?
+2. get the jagger state machine working, just printing each chord - no need to be in HID mode for this!
+
+
+need a chord map: chord --> something
+
+where something can be:
+* mode change (temporary or permanent)
+
+
+
+
